@@ -86,6 +86,12 @@ options:
         default: False
         required: False
         type: String
+    include_chain:
+        description:
+            - This option must be specified if the retrieval of the certificate root chain is needed.
+        default: False
+        required: False
+        type: String
     format:
         description:
             - This option specifies the desired output of the certificate data.
@@ -120,6 +126,14 @@ EXAMPLES = '''
     username: john_doe
     password: SomeSecretPassword
     certificate_dn: \VED\Policy\Certificates\Fake Folder\Internal\Fake Certificate
+    
+- name: Authenticate & retrieve Certificate
+  venafi_retrieval:
+    hostname: 10.10.10.10
+    username: john_doe
+    password: SomeSecretPassword
+    certificate_dn: \VED\Policy\Certificates\Fake Folder\Internal\Fake Certificate
+    include_chain: True
 
 '''
 
@@ -221,26 +235,39 @@ def venafi_login(hostname, username, password, headers, verify_ssl):
         return APIKey
     
 	
-def venafi_certificate_retrieval(hostname, token, certificate_dn, format, include_privatekey, certificate_pwd, verify_ssl):
+def venafi_certificate_retrieval(hostname, token, certificate_dn, format, include_privatekey, include_chain, certificate_pwd, verify_ssl):
     
-    if include_privatekey == 'False':
+    if include_privatekey == 'False' and include_chain == 'False':
         url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format
-    else:
+    elif include_privatekey == 'True' and include_chain == 'False':
         url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format + '&Password=' + certificate_pwd + '&IncludePrivateKey=' + include_privatekey
+    elif include_privatekey == 'False' and include_chain == 'True':
+        url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format + '&IncludeChain=' + include_chain
+    else:
+        url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format + '&Password=' + certificate_pwd + '&IncludePrivateKey=' + include_privatekey + '&IncludeChain=' + include_chain
     result = requests.get(url, verify=verify_ssl)
      
     httpcode = result.status_code
     
     if result.status_code == 200:
-        certificate = result.text.split('-----END CERTIFICATE-----')[0] + '-----END CERTIFICATE-----'
-        privatekey = result.text.split('-----END CERTIFICATE-----')[1]    
-        CertificateData = dict(
-            message="Certificate Retrieval Successful",
-            httpcode=httpcode,
-            Certificate=certificate,
-            PrivateKey=privatekey
-        )
-        return CertificateData
+        if include_privatekey == 'False':
+            certificate = result.text
+            CertificateData = dict(
+                message="Certificate Retrieval Successful",
+                httpcode=httpcode,
+                Certificate=certificate
+            )
+            return CertificateData            
+        else:
+            certificate = result.text.split('-----BEGIN RSA PRIVATE KEY-----')[0]
+            privatekey = '-----BEGIN RSA PRIVATE KEY-----' + result.text.split('-----BEGIN RSA PRIVATE KEY-----')[1]    
+            CertificateData = dict(
+                message="Certificate and Key Retrieval Successful",
+                httpcode=httpcode,
+                Certificate=certificate,
+                PrivateKey=privatekey
+            )        
+            return CertificateData             
     else:
         CertificateData = dict(
             changed=False,
@@ -259,6 +286,7 @@ def main():
         certificate_pwd=dict(required=False, type='str'),
         certificate_dn=dict(required=True, type='str'),
         include_privatekey=dict(default=False, required=False, type='str'),
+        include_chain=dict(default=False, required=False, type='str'),
         format=dict(default='Base64', required=False, choices=['Base64']),
         verify_ssl=dict(default=True, required=False, type='bool')
     )
@@ -274,6 +302,7 @@ def main():
     certificate_dn = module.params['certificate_dn']
     format = module.params['format']
     include_privatekey = module.params['include_privatekey']
+    include_chain = module.params['include_chain']
     certificate_pwd = module.params['certificate_pwd']
     verify_ssl = module.params['verify_ssl']
     headers = {'content-type': 'application/json'}
@@ -294,7 +323,7 @@ def main():
         
     if APIKey['httpcode'] == 200:
         token = APIKey['APIKey']['APIKey']
-        CertificateData = venafi_certificate_retrieval(hostname, token, certificate_dn, format, include_privatekey, certificate_pwd, verify_ssl)
+        CertificateData = venafi_certificate_retrieval(hostname, token, certificate_dn, format, include_privatekey, include_chain, certificate_pwd, verify_ssl)
     else:
         module.fail_json(msg='Login failed', **APIKey)
         

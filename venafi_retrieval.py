@@ -250,24 +250,43 @@ def venafi_certificate_retrieval(hostname, token, certificate_dn, format, includ
     httpcode = result.status_code
     
     if result.status_code == 200:
-        if include_privatekey == 'False':
+        if include_privatekey == 'False' and include_chain == 'False':
             certificate = result.text
             CertificateData = dict(
                 message="Certificate Retrieval Successful",
                 httpcode=httpcode,
                 Certificate=certificate
-            )
-            return CertificateData            
-        else:
-            certificate = result.text.split('-----BEGIN RSA PRIVATE KEY-----')[0]
-            privatekey = '-----BEGIN RSA PRIVATE KEY-----' + result.text.split('-----BEGIN RSA PRIVATE KEY-----')[1]    
+            )         
+        elif include_privatekey == 'True' and include_chain == 'False':
+            certificate = result.text.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
+            privatekey = result.text.split('-----END CERTIFICATE-----', 1)[1]    
             CertificateData = dict(
                 message="Certificate and Key Retrieval Successful",
                 httpcode=httpcode,
                 Certificate=certificate,
                 PrivateKey=privatekey
-            )        
-            return CertificateData             
+            )
+        elif include_privatekey == 'False' and include_chain == 'True':
+            certificate_data = result.text.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
+            certificate_chain = result.text.split('-----END CERTIFICATE-----', 1)[1]
+            certificate = certificate_chain + certificate_data
+            CertificateData = dict(
+                message="Certificate and Certificate Chain Retrieval Successful",
+                httpcode=httpcode,
+                Certificate=certificate
+            )
+        else:
+            certificate_data = result.text.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
+            certificate_chain = result.text.split('-----END CERTIFICATE-----', 1)[1].split('-----BEGIN RSA PRIVATE KEY-----')[0]
+            certificate = certificate_chain + certificate_data
+            privatekey = '-----BEGIN RSA PRIVATE KEY-----' + result.text.split('-----BEGIN RSA PRIVATE KEY-----')[1]
+            CertificateData = dict(
+                message="Certificate, Certificate Chain and Private Key Retrieval Successful",
+                httpcode=httpcode,
+                Certificate=certificate,
+                PrivateKey=privatekey
+            )
+        return CertificateData            
     else:
         CertificateData = dict(
             changed=False,

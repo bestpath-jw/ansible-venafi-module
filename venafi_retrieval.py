@@ -3,28 +3,20 @@
 #
 # Ansible Module to Authenticate against Venafi Trust Protection Platform
 #
+# Copyright: (c) 2018, BestPath <info@bestpath.io>
+# GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
+#
 # Author: BestPath <info@bestpath.io>
-# Version: 0.1
-# Date: 14-11-2018
+# Version: 1.0
+# Date: 24-11-2018
 #
 
-from ansible.module_utils.basic import *
-import requests
-import sys
-import json
-import re
-from requests.packages.urllib3.exceptions import InsecureRequestWarning, InsecurePlatformWarning, SNIMissingWarning
+from __future__ import absolute_import, division, print_function
+__metaclass__ = type
 
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
-requests.packages.urllib3.disable_warnings(SNIMissingWarning)
-
-
-ANSIBLE_METADATA = {
-    'metadata_version': '0.1',
-    'status': ['preview'],
-    'supported_by': 'community'
-}
+ANSIBLE_METADATA = {'metadata_version': '1.1',
+                    'status': ['preview'],
+                    'supported_by': 'community'}
 
 DOCUMENTATION = '''
 ---
@@ -149,13 +141,13 @@ current:
                 "Certificate": "<certificate_data>",
                 "PrivateKey": "<private_key_data>",
                 "httpcode": 200,
-                "message": "Certificate Retrieval Successful"
+                "changed": false,
+                "failed": false,
+                "message": "Certificate and Key Retrieval Successful"
             },
             "Login_Response": {
-                "APIKey": {
-                    "APIKey": "<API_Key_Value>",
-                    "ValidUntil": "<API_Key_Valid_Until>"
-                },
+                "APIKey": "<API_Key_Value>",
+                "ValidUntil": "<API_Key_Valid_Until>",
                 "httpcode": 200,
                 "message": "Login Successful"
             },
@@ -175,6 +167,13 @@ error:
         }
         
 '''
+
+from ansible.module_utils.basic import *
+from ansible.module_utils.urls import *
+import json
+import re
+from urllib2 import URLError
+
 
 def password_complexity_check(certificate_pwd):
 
@@ -210,92 +209,123 @@ def password_complexity_check(certificate_pwd):
         )          
         return password_check
 
+        
 def venafi_login(hostname, username, password, headers, verify_ssl):
 
-    data = {'Username': username, 'Password': password}
-    url = 'https://' + hostname + '/vedsdk/authorize/'
-    result = requests.post(url, json.dumps(data), headers=headers, verify=verify_ssl)
+    request_type = 'POST'
+    payload = {'Username': username, 'Password': password}
+    url = 'https://{0}/vedsdk/authorize/'.format(hostname)
+    
+    try:
+        request = open_url(
+            url.replace(" ", '%20'),
+            method=request_type,
+            data=json.dumps(payload),
+            validate_certs=verify_ssl,
+            headers=headers
+        )
+        APIKey = json.load(request)
+        httpcode = request.getcode()
 
-    httpcode = result.status_code
-    
-    if result.status_code == 200:
-        APIKey = dict(
-            message="Login Successful",
-            httpcode=httpcode,
-            APIKey=result.json(),
-        )
-        return APIKey
-    else:
-        APIKey = dict(
-            changed=False,
-            failed=True,
-            message="Either parameter 'password' or 'username' has been entered incorrectly, or the account is locked out",
-            httpcode=httpcode,
-        )
-        return APIKey
-    
-	
-def venafi_certificate_retrieval(hostname, token, certificate_dn, format, include_privatekey, include_chain, certificate_pwd, verify_ssl):
-    
-    if include_privatekey == 'False' and include_chain == 'False':
-        url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format
-    elif include_privatekey == 'True' and include_chain == 'False':
-        url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format + '&Password=' + certificate_pwd + '&IncludePrivateKey=' + include_privatekey
-    elif include_privatekey == 'False' and include_chain == 'True':
-        url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format + '&IncludeChain=' + include_chain
-    else:
-        url = 'https://' + hostname + '/vedsdk/Certificates/Retrieve?apikey=' + token + '&CertificateDN=' + certificate_dn + '&Format=' + format + '&Password=' + certificate_pwd + '&IncludePrivateKey=' + include_privatekey + '&IncludeChain=' + include_chain
-    result = requests.get(url, verify=verify_ssl)
-     
-    httpcode = result.status_code
-    
-    if result.status_code == 200:
-        if include_privatekey == 'False' and include_chain == 'False':
-            certificate = result.text
-            CertificateData = dict(
-                message="Certificate Retrieval Successful",
-                httpcode=httpcode,
-                Certificate=certificate
-            )         
-        elif include_privatekey == 'True' and include_chain == 'False':
-            certificate = result.text.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
-            privatekey = result.text.split('-----END CERTIFICATE-----', 1)[1]    
-            CertificateData = dict(
-                message="Certificate and Key Retrieval Successful",
-                httpcode=httpcode,
-                Certificate=certificate,
-                PrivateKey=privatekey
-            )
-        elif include_privatekey == 'False' and include_chain == 'True':
-            certificate_data = result.text.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
-            certificate_chain = result.text.split('-----END CERTIFICATE-----', 1)[1]
-            certificate = certificate_chain + certificate_data
-            CertificateData = dict(
-                message="Certificate and Certificate Chain Retrieval Successful",
-                httpcode=httpcode,
-                Certificate=certificate
-            )
+        if httpcode == 200:       
+            APIKey['message'] = "Login Successful"
+            APIKey['httpcode'] = httpcode
         else:
-            certificate_data = result.text.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
-            certificate_chain = result.text.split('-----END CERTIFICATE-----', 1)[1].split('-----BEGIN RSA PRIVATE KEY-----')[0]
-            certificate = certificate_chain + certificate_data
-            privatekey = '-----BEGIN RSA PRIVATE KEY-----' + result.text.split('-----BEGIN RSA PRIVATE KEY-----')[1]
-            CertificateData = dict(
-                message="Certificate, Certificate Chain and Private Key Retrieval Successful",
-                httpcode=httpcode,
-                Certificate=certificate,
-                PrivateKey=privatekey
-            )
-        return CertificateData            
-    else:
+            APIKey['changed'] = False
+            APIKey['failed'] = True
+            APIKey['message'] = "Either parameter 'password' or 'username' has been entered incorrectly, or the account is locked out"
+            APIKey['httpcode'] = httpcode
+        
+    except URLError as urlerror:
+        APIKey = dict(
+            url=url,
+            method=request_type,
+            validate_certs=verify_ssl,
+            urlerror=urlerror.read(),
+            message="Either parameter 'password' or 'username' has been entered incorrectly, or the account is locked out",
+            httpcode=None
+        ) 
+
+    return APIKey
+
+        
+def venafi_certificate_retrieval(hostname, headers, token, certificate_dn, format, include_privatekey, include_chain, certificate_pwd, verify_ssl):
+    
+    request_type = 'GET'
+    if include_privatekey == 'False' and include_chain == 'False':
+        url = 'https://{0}/vedsdk/Certificates/Retrieve?apikey={1}&CertificateDN={2}&Format={3}'.format(hostname, token, certificate_dn, format)
+    elif include_privatekey == 'True' and include_chain == 'False':
+        url = 'https://{0}/vedsdk/Certificates/Retrieve?apikey={1}&CertificateDN={2}&Format={3}&Password={4}&IncludePrivateKey={5}'.format(hostname, token, certificate_dn, format, certificate_pwd, include_privatekey)
+    elif include_privatekey == 'False' and include_chain == 'True':
+        url = 'https://{0}/vedsdk/Certificates/Retrieve?apikey={1}&CertificateDN={2}&Format={3}&IncludeChain={4}'.format(hostname, token, certificate_dn, format, include_chain)
+    else: 
+        url = 'https://{0}/vedsdk/Certificates/Retrieve?apikey={1}&CertificateDN={2}&Format={3}&Password={4}&IncludePrivateKey={5}&IncludeChain={6}'.format(hostname, token, certificate_dn, format, certificate_pwd, include_privatekey, include_chain)
+
+    try:
+        request = open_url(
+            url.replace(" ", '%20'),
+            method=request_type,
+            validate_certs=verify_ssl,
+            headers=headers
+        )
+        
         CertificateData = dict(
             changed=False,
-            failed=True,
-            message="Certificate Retrieval Failed",
-            httpcode=httpcode,
+            failed=False
         )
-        return CertificateData
-       
+        httpcode = request.getcode()
+        RequestData = "\n".join(request.readlines())
+        
+        if httpcode == 200:
+            if include_privatekey == 'False' and include_chain == 'False':
+                certificate = RequestData
+                
+                CertificateData['message'] = "Certificate Retrieval Successful"
+                CertificateData['httpcode'] = httpcode
+                CertificateData['Certificate'] = certificate
+                    
+            elif include_privatekey == 'True' and include_chain == 'False':
+                certificate = RequestData.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
+                privatekey = RequestData.split('-----END CERTIFICATE-----', 1)[1]    
+                
+                CertificateData['message'] = "Certificate and Key Retrieval Successful"
+                CertificateData['httpcode'] = httpcode
+                CertificateData['Certificate'] = certificate            
+                CertificateData['PrivateKey'] = privatekey   
+        
+            elif include_privatekey == 'False' and include_chain == 'True':
+                certificate_data = RequestData.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
+                certificate_chain = RequestData.split('-----END CERTIFICATE-----', 1)[1]
+                certificate = certificate_chain + certificate_data
+                
+                CertificateData['message'] = "Certificate and Certificate Chain Retrieval Successful"
+                CertificateData['httpcode'] = httpcode
+                CertificateData['Certificate'] = certificate                       
+                
+            else:
+                certificate_data = RequestData.split('-----END CERTIFICATE-----', 1)[0] + '-----END CERTIFICATE-----'
+                certificate_chain = RequestData.split('-----END CERTIFICATE-----', 1)[1].split('-----BEGIN RSA PRIVATE KEY-----')[0]
+                certificate = certificate_chain + certificate_data
+                privatekey = '-----BEGIN RSA PRIVATE KEY-----' + RequestData.split('-----BEGIN RSA PRIVATE KEY-----')[1]
+        
+                CertificateData['message'] = "Certificate, Certificate Chain and Private Key Retrieval Successful"
+                CertificateData['httpcode'] = httpcode
+                CertificateData['Certificate'] = certificate            
+                CertificateData['PrivateKey'] = privatekey
+        
+    except URLError as urlerror:
+        CertificateData = dict(
+            url=url,
+            method=request_type,
+            validate_certs=verify_ssl,
+            urlerror=urlerror.read(),
+            message="Certificate Data retrieval has failed",
+            httpcode=None
+        )
+    
+    return CertificateData
+        
+
 def main():
 
     module_args = dict(
@@ -323,11 +353,11 @@ def main():
     include_privatekey = module.params['include_privatekey']
     include_chain = module.params['include_chain']
     certificate_pwd = module.params['certificate_pwd']
+    headers = {'Content-Type': 'application/json'}
     verify_ssl = module.params['verify_ssl']
-    headers = {'content-type': 'application/json'}
 
     APIKey = venafi_login(hostname, username, password, headers, verify_ssl)
-    
+
     if include_privatekey == 'True' and certificate_pwd is None:
         NoCertificatePassword = dict(
             changed=False,
@@ -339,13 +369,13 @@ def main():
         password_check = password_complexity_check(certificate_pwd)
         if password_check['failed'] == True:
             module.exit_json(**password_check)
-        
+
     if APIKey['httpcode'] == 200:
-        token = APIKey['APIKey']['APIKey']
-        CertificateData = venafi_certificate_retrieval(hostname, token, certificate_dn, format, include_privatekey, include_chain, certificate_pwd, verify_ssl)
+        token = APIKey['APIKey']
+        CertificateData = venafi_certificate_retrieval(hostname, headers, token, certificate_dn, format, include_privatekey, include_chain, certificate_pwd, verify_ssl)
     else:
         module.fail_json(msg='Login failed', **APIKey)
-        
+
     if CertificateData['httpcode'] == 200:
         result = dict(
             changed=False,
@@ -354,8 +384,7 @@ def main():
         )
         module.exit_json(**result)
     else:
-        module.fail_json(msg='Failed to retrieve Certificate Data', **CertificateData)        
-        
-
+        module.fail_json(msg='Failed to retrieve Certificate Data', **CertificateData)     
+    
 if __name__ == '__main__':
     main()

@@ -274,7 +274,7 @@ def venafi_certificate_retrieval(hostname, headers, token, certificate_dn, forma
             failed=False
         )
         httpcode = request.getcode()
-        RequestData = "\n".join(request.readlines())
+        RequestData = "".join(request.readlines())
         
         if httpcode == 200:
             if include_privatekey == 'False' and include_chain == 'False':
